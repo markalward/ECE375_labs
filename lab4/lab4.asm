@@ -1,15 +1,18 @@
 ;***********************************************************
 ;*
-;*	Enter Name of file here
+;*	lab4.asm
 ;*
-;*	Enter the description of the program here
+;*	This program causes the TekBot to behave as a "bump-bot",
+;*	as described in lab 1. This version of the program is 
+;*	written in assembly for the Atmel Atmega128. It uses 
+;*	interrupts to respond when the whiskers are bumped.
 ;*
-;*	This is the skeleton file Lab 4 of ECE 375
+;*	This is Lab 4 of ECE 375
 ;*
 ;***********************************************************
 ;*
-;*	 Author: Enter your name
-;*	   Date: Enter Date
+;*	 Author: Mark Alward
+;*	   Date: Jan 29, 2013
 ;*
 ;***********************************************************
 

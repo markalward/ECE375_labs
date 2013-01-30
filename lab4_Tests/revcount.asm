@@ -1,0 +1,274 @@
+
+.INCLUDE "m128def.inc"
+.DEF mpr = R16
+
+.DSEG
+.ORG 0x0120
+CNT:	.BYTE 1
+PULSES_PER_CYCLE:	.BYTE 1
+
+.CSEG
+
+.ORG $0000
+RJMP MAIN
+
+.ORG $0004
+RJMP PIN_INTERRUPT
+
+.ORG $0018
+RJMP TIMER_INTERRUPT
+
+.ORG $0050
+
+MAIN:
+	//stack setup
+	LDI R16, LOW(RAMEND)
+	OUT SPL, R16
+	LDI R16, HIGH(RAMEND)
+	OUT SPH, R16
+
+	//configure PORTD(1) as input
+	IN R16, DDRD
+	ORI R16, 0x02
+	OUT DDRD, R16
+
+	//set CNT to 0
+	LDI R16, 0
+	STS CNT, R16
+	//set PULSES_PER_CYCLE to 1
+	LDI R16, 1
+	STS PULSES_PER_CYCLE, R16
+
+	CALL LCDInit
+
+	RCALL SETUP_INTERRUPTS
+	
+	LOOP:
+		RJMP LOOP
+
+
+RANGE_ERRSTR:	.DB "RANGE ERROR     "
+RPM_STR:		.DB "RPM"
+
+PIN_INTERRUPT:
+	PUSH R16
+	IN R16, SREG
+	PUSH R16
+
+	LDS R16, CNT
+	INC R16
+	STS CNT, R16
+
+	POP R16
+	OUT SREG, R16
+	POP R16
+	RETI
+
+
+TIMER_INTERRUPT:
+	PUSH R0
+	PUSH R1
+	PUSH R16
+	PUSH R17
+	PUSH count
+	IN R16, SREG
+	PUSH R16
+
+	//multiply count * 30
+	LDS R16, CNT
+	LDI R17, 30
+	MUL R16, R17
+
+	//rotate right by PULSES_PER_CYCLE bits
+	LDS R17, PULSES_PER_CYCLE
+TIMER_INTERRUPT_LOOP_START:
+	CPI R17, 0
+	BREQ TIMER_INTERRUPT_LOOP_END
+
+	CLC
+	ROR R1
+	ROR R0
+
+	DEC R17
+	RJMP TIMER_INTERRUPT_LOOP_START
+TIMER_INTERRUPT_LOOP_END:
+
+	RCALL LCDClrLn1
+
+	MOV R16, R1
+	CPI R16, 0
+	BREQ TIMER_INTERRUPT_ELSE
+	
+	//display "Out of Range"
+	LDI R16, 16
+	PUSH R16
+	LDI R16, LOW(2 * RANGE_ERRSTR)
+	PUSH R16
+	LDI R16, HIGH(2 * RANGE_ERRSTR)
+	PUSH R16
+	LDI R16, 0x00
+	PUSH R16
+	LDI R16, 0x01
+	PUSH R16
+	CALL COPY_PTOD
+	POP R16
+	POP R16
+	POP R16
+	POP R16
+	POP R16
+	RCALL LCDWrLn1
+	JMP TIMER_INTERRUPT_IF_END
+TIMER_INTERRUPT_ELSE:
+
+	//convert number to ascii
+	MOV mpr, R0
+	LDI XL, 0x00
+	LDI XH, 0x01
+	RCALL Bin2ASCII
+
+	//display "RPM"
+	LDI R16, 3
+	PUSH R16
+	LDI R16, LOW(RPM_STR * 2)
+	PUSH R16
+	LDI R16, HIGH(RPM_STR * 2)
+	PUSH R16
+	INC count
+	PUSH count
+	LDI R16, 0x01
+	PUSH R16
+	RCALL COPY_PTOD
+	POP R16
+	POP R16
+	POP R16
+	POP R16
+	POP R16
+
+	RCALL LCDWrLn1
+TIMER_INTERRUPT_IF_END:
+
+	//reset CNT
+	LDI R16, 0
+	STS CNT, R16
+	
+	POP R16
+	OUT SREG, R16
+	POP count
+	POP R17
+	POP R16
+	POP R1
+	POP R0
+	RETI
+
+
+SETUP_INTERRUPTS:
+	PUSH R16
+	PUSH YL
+	PUSH YH
+
+	//EICRA |= (1 << ISC10) | (1 << ISC11)
+	LDS R16, EICRA
+	ORI R16, 0b00001100
+	STS EICRA, R16
+
+	//EIMSK |= (1 << INT1)
+	IN R16, EIMSK
+	ORI R16, 0b000000010
+	OUT EIMSK, R16
+
+	//EIFR |= (1 << INTF1)
+	IN R16, EIFR
+	ORI R16, 0b000000010
+	OUT EIFR, R16
+
+	//TCCR1A &= 0b00000000;
+	LDI R16, 0
+	OUT TCCR1A, R16
+
+	//set TCCR1B
+	IN R16, TCCR1B
+	ANDI R16, 0b11100000
+	ORI R16, 0b00001101
+	OUT TCCR1B, R16
+
+	//init TCNT1
+	LDI R16, 0
+	OUT TCNT1H, R16
+	OUT TCNT1L, R16
+
+	//init OCR1A
+	LDI R16, 0x7f
+	OUT OCR1AH, R16
+	LDI R16, 0xff
+	OUT OCR1AL, R16
+
+	//set TIMSK to allow interrupt
+	IN R16, TIMSK
+	ORI R16, 0b00010000
+	OUT TIMSK, R16
+
+	SEI
+
+	//return
+	POP YH
+	POP YL
+	POP R16
+	RET
+
+
+/*	copies a string in program memory to data memory
+	Parameters:
+		count		8-bit number of chars to copy
+		src			16-bit source address in program memory (low, high)
+		dst			16-bit destination address in data memory
+
+	while(*src != 0) {
+		*dst = *src
+		dst++, src++;
+	}
+	*dst = 0;
+*/
+COPY_PTOD:
+	PUSH YL
+	PUSH YH
+	PUSH XL
+	PUSH XH
+	PUSH ZL
+	PUSH ZH
+	PUSH R16
+
+	//establish frame pointer
+	IN YL, SPL
+	IN YH, SPH
+
+	//Z is source address, X is dest address
+	LDD ZL, Y+13
+	LDD ZH, Y+12
+	LDD XL, Y+11
+	LDD XH, Y+10
+
+COPY_PTOD_LOOP1_START:
+	LDD R16, Y+14
+	CPI R16, 0
+	BREQ COPY_PTOD_LOOP1_END
+
+	LPM R16, Z+
+	ST X+, R16
+
+	LDD R16, Y+14
+	DEC R16
+	STD Y+14, R16
+	RJMP COPY_PTOD_LOOP1_START
+COPY_PTOD_LOOP1_END:
+
+	POP R16
+	POP ZH
+	POP ZL
+	POP XH
+	POP XL
+	POP YH
+	POP YL
+	RET
+
+.INCLUDE "C:\Users\mark\Documents\Atmel Studio\revcountasm\revcountasm\LCDDriver.asm"
+
